@@ -1,0 +1,6 @@
+[package]
+name = "rev_lines"
+version = "0.1.0"
+authors = ["Michael Coyne <mikeycgto@gmail.com>"]
+
+[dependencies]
