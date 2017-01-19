@@ -1,6 +1,11 @@
 [package]
 name = "rev_lines"
 version = "0.1.0"
+description = "Rust Iterator for reading files line by line with a buffer in reverse"
+repository = "https://github.com/mikeycgto/rev_lines"
+documentation = "https://docs.rs/message_verifier"
+license = "MIT"
 authors = ["Michael Coyne <mikeycgto@gmail.com>"]
+keywords = ["lines", "reverse", "reader", "buffer"]
 
 [dependencies]
