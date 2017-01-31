@@ -13,6 +13,6 @@ let file = File::open("/path/to/file").unwrap();
 let mut rev_lines = RevLines::new(file).unwrap();
 
 for line in rev_lines {
-  println!("{}", line);
+    println!("{}", line);
 }
 ```
