@@ -9,6 +9,9 @@ line with a buffer in reverse
 ### Example
 
 ```rust
+extern crate rev_lines;
+use rev_lines::RevLines;
+
 let file = File::open("/path/to/file").unwrap();
 let mut rev_lines = RevLines::new(file).unwrap();
 

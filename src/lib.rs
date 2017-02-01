@@ -1,26 +1,50 @@
-// This method uses logic borrowed from [uutils/coreutils
-// tail](https://github.com/uutils/coreutils/blob/f2166fed0ad055d363aedff6223701001af090d3/src/tail/tail.rs#L399-L402)
+//! ### RevLines
+//!
+//! This library provides a small Rust Iterator for reading files line
+//! by line with a buffer in reverse.
+//!
+//! #### Example
+//!
+//! ```
+//!  extern crate rev_lines;
+//!  use rev_lines::RevLines;
+//!
+//!  let file = File::open("/path/to/file").unwrap();
+//!  let mut rev_lines = RevLines::new(file).unwrap();
+//!
+//!  for line in rev_lines {
+//!      println!("{}", line);
+//!
+//!  }
+//! ```
+//!
+//! This method uses logic borrowed from [uutils/coreutils
+//! tail](https://github.com/uutils/coreutils/blob/f2166fed0ad055d363aedff6223701001af090d3/src/tail/tail.rs#L399-L402)
 
 use std::cmp::min;
 use std::io::{Seek, SeekFrom, Read, Result};
 use std::fs::File;
-
-pub struct RevLines {
-    file: File,
-    file_pos: u64,
-    buf_size: u64
-}
 
 static DEFAULT_SIZE: usize = 4096;
 
 static LF_BYTE: u8 = '\n' as u8;
 static CR_BYTE: u8 = '\r' as u8;
 
+/// `RevLines` struct
+pub struct RevLines {
+    file: File,
+    file_pos: u64,
+    buf_size: u64
+}
+
 impl RevLines {
+    /// Create a new `RevLines` struct from a `File`. The internal
+    /// buffer defaults to 4096 bytes in size.
     pub fn new(file: File) -> Result<RevLines> {
         RevLines::with_capacity(DEFAULT_SIZE, file)
     }
 
+    /// Create a new `RevLines` struct with a given capacity.
     pub fn with_capacity(cap: usize, mut file: File) -> Result<RevLines> {
         // Seek to end of file now
         let file_size = file.seek(SeekFrom::End(0))?;
