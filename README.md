@@ -15,6 +15,7 @@ Documentation is available on [Docs.rs](https://docs.rs/rev_lines).
 
 ```rust
 extern crate rev_lines;
+
 use rev_lines::RevLines;
 
 let file = File::open("/path/to/file").unwrap();

@@ -1,20 +1,24 @@
 //! ### RevLines
 //!
-//! This library provides a small Rust Iterator for reading files line
-//! by line with a buffer in reverse.
+//! This library provides a small Rust Iterator for reading files or
+//! any `BufReader` line by line with buffering in reverse.
 //!
 //! #### Example
 //!
 //! ```
 //!  extern crate rev_lines;
+//!
 //!  use rev_lines::RevLines;
+//!  use std::io::BufReader;
+//!  use std::fs::File;
 //!
-//!  let file = File::open("/path/to/file").unwrap();
-//!  let mut rev_lines = RevLines::new(file).unwrap();
+//!  fn main() {
+//!      let file = File::open("tests/multi_line_file").unwrap();
+//!      let rev_lines = RevLines::new(BufReader::new(file)).unwrap();
 //!
-//!  for line in rev_lines {
-//!      println!("{}", line);
-//!
+//!      for line in rev_lines {
+//!          println!("{}", line);
+//!      }
 //!  }
 //! ```
 //!
@@ -32,47 +36,48 @@ static CR_BYTE: u8 = '\r' as u8;
 
 /// `RevLines` struct
 pub struct RevLines<R> {
-    file: BufReader<R>,
-    file_pos: u64,
+    reader: BufReader<R>,
+    reader_pos: u64,
     buf_size: u64
 }
 
 impl<R:Seek+Read> RevLines<R> {
-    /// Create a new `RevLines` struct from a `File`. The internal
-    /// buffer defaults to 4096 bytes in size.
-    pub fn new(file: BufReader<R>) -> Result<RevLines<R>> {
-        RevLines::with_capacity(DEFAULT_SIZE, file)
+    /// Create a new `RevLines` struct from a `BufReader<R>`. Internal
+    /// buffering for iteration will default to 4096 bytes at a time.
+    pub fn new(reader: BufReader<R>) -> Result<RevLines<R>> {
+        RevLines::with_capacity(DEFAULT_SIZE, reader)
     }
 
-    /// Create a new `RevLines` struct with a given capacity.
+    /// Create a new `RevLines` struct from a `BufReader<R>`. Interal
+    /// buffering for iteration will use `cap` bytes at a time.
     pub fn with_capacity(cap: usize, mut reader: BufReader<R>) -> Result<RevLines<R>> {
-        // Seek to end of file now
-        let file_size = reader.seek(SeekFrom::End(0))?;
+        // Seek to end of reader now
+        let reader_size = reader.seek(SeekFrom::End(0))?;
 
         let mut rev_lines = RevLines {
-            file: reader,
-            file_pos: file_size,
+            reader: reader,
+            reader_pos: reader_size,
             buf_size: cap as u64,
         };
 
-        // Handle any trailing new line characters for the file
+        // Handle any trailing new line characters for the reader
         // so the first next call does not return Some("")
 
         // Read at most 2 bytes
-        let end_size = min(file_size, 2);
+        let end_size = min(reader_size, 2);
         let end_buf = rev_lines.read_to_buffer(end_size)?;
 
         if end_size == 1 {
             if end_buf[0] != LF_BYTE {
-                rev_lines.move_file_position(1)?;
+                rev_lines.move_reader_position(1)?;
             }
         } else if end_size == 2 {
             if end_buf[0] != CR_BYTE {
-                rev_lines.move_file_position(1)?;
+                rev_lines.move_reader_position(1)?;
             }
 
             if end_buf[1] != LF_BYTE {
-                rev_lines.move_file_position(1)?;
+                rev_lines.move_reader_position(1)?;
             }
         }
 
@@ -83,18 +88,18 @@ impl<R:Seek+Read> RevLines<R> {
         let mut buf = vec![0; size as usize];
         let offset = -(size as i64);
 
-        self.file.seek(SeekFrom::Current(offset))?;
-        self.file.read_exact(&mut buf[0..(size as usize)])?;
-        self.file.seek(SeekFrom::Current(offset))?;
+        self.reader.seek(SeekFrom::Current(offset))?;
+        self.reader.read_exact(&mut buf[0..(size as usize)])?;
+        self.reader.seek(SeekFrom::Current(offset))?;
 
-        self.file_pos -= size;
+        self.reader_pos -= size;
 
         Ok(buf)
     }
 
-    fn move_file_position(&mut self, offset: u64) -> Result<()> {
-        self.file.seek(SeekFrom::Current(offset as i64))?;
-        self.file_pos += offset;
+    fn move_reader_position(&mut self, offset: u64) -> Result<()> {
+        self.reader.seek(SeekFrom::Current(offset as i64))?;
+        self.reader_pos += offset;
 
         Ok(())
     }
@@ -107,7 +112,7 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
         let mut result: Vec<u8> = Vec::new();
 
         'outer: loop {
-            if self.file_pos < 1 {
+            if self.reader_pos < 1 {
                 if result.len() > 0 {
                     break;
                 }
@@ -116,8 +121,8 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
             }
 
             // Read the of minimum between the desired
-            // buffer size or remaining length of the file
-            let size = min(self.buf_size, self.file_pos);
+            // buffer size or remaining length of the reader
+            let size = min(self.buf_size, self.reader_pos);
 
             match self.read_to_buffer(size) {
                 Ok(buf) => {
@@ -131,9 +136,9 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
                                 offset -= 1;
                             }
 
-                            match self.file.seek(SeekFrom::Current(offset as i64)) {
+                            match self.reader.seek(SeekFrom::Current(offset as i64)) {
                                 Ok(_)  => {
-                                    self.file_pos += offset;
+                                    self.reader_pos += offset;
 
                                     break 'outer;
                                 },
@@ -163,7 +168,7 @@ mod tests {
     use std::fs::File;
 
     use RevLines;
-	use std::io::BufReader;
+    use std::io::BufReader;
 
     #[test]
     fn it_handles_empty_files() {
