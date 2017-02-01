@@ -6,6 +6,6 @@ repository = "https://github.com/mikeycgto/rev_lines"
 documentation = "https://docs.rs/message_verifier"
 license = "MIT"
 authors = ["Michael Coyne <mikeycgto@gmail.com>"]
-keywords = ["lines", "reverse", "reader", "buffer"]
+keywords = ["lines", "reverse", "reader", "buffer", "iterator"]
 
 [dependencies]
