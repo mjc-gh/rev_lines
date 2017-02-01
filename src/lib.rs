@@ -23,7 +23,7 @@
 
 use std::cmp::min;
 use std::io::{Seek, SeekFrom, Read, Result};
-use std::fs::File;
+use std::io::BufReader;
 
 static DEFAULT_SIZE: usize = 4096;
 
@@ -31,26 +31,26 @@ static LF_BYTE: u8 = '\n' as u8;
 static CR_BYTE: u8 = '\r' as u8;
 
 /// `RevLines` struct
-pub struct RevLines {
-    file: File,
+pub struct RevLines<R> {
+    file: BufReader<R>,
     file_pos: u64,
     buf_size: u64
 }
 
-impl RevLines {
+impl<R:Seek+Read> RevLines<R> {
     /// Create a new `RevLines` struct from a `File`. The internal
     /// buffer defaults to 4096 bytes in size.
-    pub fn new(file: File) -> Result<RevLines> {
+    pub fn new(file: BufReader<R>) -> Result<RevLines<R>> {
         RevLines::with_capacity(DEFAULT_SIZE, file)
     }
 
     /// Create a new `RevLines` struct with a given capacity.
-    pub fn with_capacity(cap: usize, mut file: File) -> Result<RevLines> {
+    pub fn with_capacity(cap: usize, mut reader: BufReader<R>) -> Result<RevLines<R>> {
         // Seek to end of file now
-        let file_size = file.seek(SeekFrom::End(0))?;
+        let file_size = reader.seek(SeekFrom::End(0))?;
 
         let mut rev_lines = RevLines {
-            file: file,
+            file: reader,
             file_pos: file_size,
             buf_size: cap as u64,
         };
@@ -100,7 +100,7 @@ impl RevLines {
     }
 }
 
-impl Iterator for RevLines {
+impl<R:Read+Seek> Iterator for RevLines<R> {
     type Item = String;
 
     fn next(&mut self) -> Option<String> {
@@ -163,11 +163,12 @@ mod tests {
     use std::fs::File;
 
     use RevLines;
+	use std::io::BufReader;
 
     #[test]
     fn it_handles_empty_files() {
         let file = File::open("tests/empty_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
 
         assert_eq!(rev_lines.next(), None);
     }
@@ -175,7 +176,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_one_line() {
         let file = File::open("tests/one_line_file", ).unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
 
         assert_eq!(rev_lines.next(), Some("ABCD".to_string()));
         assert_eq!(rev_lines.next(), None);
@@ -184,7 +185,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_multi_lines() {
         let file = File::open("tests/multi_line_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
 
         assert_eq!(rev_lines.next(), Some("UVWXYZ".to_string()));
         assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
@@ -196,7 +197,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_blank_lines() {
         let file = File::open("tests/blank_line_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
 
         assert_eq!(rev_lines.next(), Some("".to_string()));
         assert_eq!(rev_lines.next(), Some("".to_string()));
@@ -209,7 +210,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_multi_lines_and_with_capacity() {
         let file = File::open("tests/multi_line_file").unwrap();
-        let mut rev_lines = RevLines::with_capacity(5, file).unwrap();
+        let mut rev_lines = RevLines::with_capacity(5, BufReader::new(file)).unwrap();
 
         assert_eq!(rev_lines.next(), Some("UVWXYZ".to_string()));
         assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
