@@ -163,11 +163,14 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
     }
 }
 
+#[cfg(feature = "tokio1")]
+pub mod tokio1;
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
 
-    use RevLines;
+    use super::RevLines;
     use std::io::BufReader;
 
     #[test]

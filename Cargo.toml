@@ -1,11 +1,21 @@
 [package]
 name = "rev_lines"
-version = "0.2.1"
+version = "0.2.2"
 description = "Rust Iterator for reading files line by line with a buffer in reverse"
 repository = "https://github.com/mikeycgto/rev_lines"
 documentation = "https://docs.rs/rev_lines"
 license = "MIT"
 authors = ["Michael Coyne <mikeycgto@gmail.com>"]
 keywords = ["lines", "reverse", "reader", "buffer", "iterator"]
+edition = "2018"
 
 [dependencies]
+tokio = { version = "1.15.0", features = ["io-util"], optional = true }
+futures = { version = "0.3.21", optional = true }
+async-stream = { version = "0.3.3", optional = true }
+
+[features]
+tokio1 = ["tokio", "futures", "async-stream"]
+
+[dev-dependencies]
+tokio = { version = "1.15.0", features = ["rt-multi-thread", "fs", "io-util", "macros"] }
