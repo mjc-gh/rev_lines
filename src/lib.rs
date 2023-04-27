@@ -103,12 +103,8 @@ impl<R:Seek+Read> RevLines<R> {
 
         Ok(())
     }
-}
 
-impl<R:Read+Seek> Iterator for RevLines<R> {
-    type Item = String;
-
-    fn next(&mut self) -> Option<String> {
+    fn next_line(&mut self) -> Option<Vec<u8>> {
         let mut result: Vec<u8> = Vec::new();
 
         'outer: loop {
@@ -158,8 +154,40 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
         // Reverse the results since they were written backwards
         result.reverse();
 
+        Some(result)
+    }
+}
+
+impl<R:Read+Seek> Iterator for RevLines<R> {
+    type Item = String;
+
+    fn next(&mut self) -> Option<String> {
         // Convert to a String
-        Some(String::from_utf8(result).unwrap())
+        Some(String::from_utf8(self.next_line()?).unwrap())
+    }
+}
+
+pub struct RevByteLines<R>(RevLines<R>);
+
+impl<R:Seek+Read> RevByteLines<R> {
+    /// Create a new `RevLines` struct from a `BufReader<R>`. Internal
+    /// buffering for iteration will default to 4096 bytes at a time.
+    pub fn new(reader: BufReader<R>) -> Result<RevByteLines<R>> {
+        Ok(RevByteLines(RevLines::with_capacity(DEFAULT_SIZE, reader)?))
+    }
+
+    /// Create a new `RevLines` struct from a `BufReader<R>`. Interal
+    /// buffering for iteration will use `cap` bytes at a time.
+    pub fn with_capacity(cap: usize, reader: BufReader<R>) -> Result<RevByteLines<R>> {
+        Ok(RevByteLines(RevLines::with_capacity(cap, reader)?))
+    }
+}
+
+impl<R:Read+Seek> Iterator for RevByteLines<R> {
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Vec<u8>> {
+        self.0.next_line()
     }
 }
 
@@ -169,6 +197,8 @@ mod tests {
 
     use RevLines;
     use std::io::BufReader;
+
+    use crate::RevByteLines;
 
     #[test]
     fn it_handles_empty_files() {
@@ -221,6 +251,72 @@ mod tests {
         assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
         assert_eq!(rev_lines.next(), Some("GHIJK".to_string()));
         assert_eq!(rev_lines.next(), Some("ABCDEF".to_string()));
+        assert_eq!(rev_lines.next(), None);
+    }
+
+
+    #[test]
+    fn rev_bytes_handles_empty_files() {
+        let file = File::open("tests/empty_file").unwrap();
+        let mut rev_lines = RevByteLines::new(BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), None);
+    }
+
+    #[test]
+    fn rev_bytes_handles_file_with_one_line() {
+        let file = File::open("tests/one_line_file", ).unwrap();
+        let mut rev_lines = RevByteLines::new(BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), Some(vec![b'A', b'B', b'C', b'D']));
+        assert_eq!(rev_lines.next(), None);
+    }
+
+    #[test]
+    fn rev_bytes_handles_file_with_multi_lines() {
+        let file = File::open("tests/multi_line_file").unwrap();
+        let mut rev_lines = RevByteLines::new(BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), Some(vec![b'U', b'V', b'W', b'X', b'Y', b'Z']));
+        assert_eq!(rev_lines.next(), Some(vec![b'L', b'M', b'N', b'O', b'P', b'Q', b'R', b'S', b'T']));
+        assert_eq!(rev_lines.next(), Some(vec![b'G', b'H', b'I', b'J', b'K']));
+        assert_eq!(rev_lines.next(), Some(vec![b'A', b'B', b'C', b'D', b'E', b'F']));
+        assert_eq!(rev_lines.next(), None);
+    }
+
+    #[test]
+    fn rev_bytes_handles_file_with_blank_lines() {
+        let file = File::open("tests/blank_line_file").unwrap();
+        let mut rev_lines = RevByteLines::new(BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), Some(Vec::new()));
+        assert_eq!(rev_lines.next(), Some(Vec::new()));
+        assert_eq!(rev_lines.next(), Some(vec![b'X', b'Y', b'Z']));
+        assert_eq!(rev_lines.next(), Some(Vec::new()));
+        assert_eq!(rev_lines.next(), Some(vec![b'A', b'B', b'C', b'D']));
+        assert_eq!(rev_lines.next(), None);
+    }
+
+    #[test]
+    fn rev_bytes_handles_file_with_multi_lines_and_with_capacity() {
+        let file = File::open("tests/multi_line_file").unwrap();
+        let mut rev_lines = RevByteLines::with_capacity(5, BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), Some(vec![b'U', b'V', b'W', b'X', b'Y', b'Z']));
+        assert_eq!(rev_lines.next(), Some(vec![b'L', b'M', b'N', b'O', b'P', b'Q', b'R', b'S', b'T']));
+        assert_eq!(rev_lines.next(), Some(vec![b'G', b'H', b'I', b'J', b'K']));
+        assert_eq!(rev_lines.next(), Some(vec![b'A', b'B', b'C', b'D', b'E', b'F']));
+        assert_eq!(rev_lines.next(), None);
+    }
+
+    #[test]
+    fn rev_bytes_handles_file_with_multi_lines_with_non_utf8_chars() {
+        let file = File::open("tests/non_utf8_line_file").unwrap();
+        let mut rev_lines = RevByteLines::new(BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), Some(vec![b'G', b'H', b'I', b'J', b'K']));
+        assert_eq!(rev_lines.next(), Some(vec![b'X', 255, b'Y']));
+        assert_eq!(rev_lines.next(), Some(vec![b'A', b'B', b'C', b'D', b'E', b'F']));
         assert_eq!(rev_lines.next(), None);
     }
 }
