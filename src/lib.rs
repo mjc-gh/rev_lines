@@ -28,8 +28,8 @@
 //! tail](https://github.com/uutils/coreutils/blob/f2166fed0ad055d363aedff6223701001af090d3/src/tail/tail.rs#L399-L402)
 
 use std::cmp::min;
-use std::io::{Seek, SeekFrom, Read, Result};
 use std::io::BufReader;
+use std::io::{Read, Result, Seek, SeekFrom};
 
 static DEFAULT_SIZE: usize = 4096;
 
@@ -40,10 +40,10 @@ static CR_BYTE: u8 = '\r' as u8;
 pub struct RevLines<R> {
     reader: BufReader<R>,
     reader_pos: u64,
-    buf_size: u64
+    buf_size: u64,
 }
 
-impl<R:Seek+Read> RevLines<R> {
+impl<R: Seek + Read> RevLines<R> {
     /// Create a new `RevLines` struct from a `BufReader<R>`. Internal
     /// buffering for iteration will default to 4096 bytes at a time.
     pub fn new(reader: BufReader<R>) -> Result<RevLines<R>> {
@@ -107,7 +107,7 @@ impl<R:Seek+Read> RevLines<R> {
     }
 }
 
-impl<R:Read+Seek> Iterator for RevLines<R> {
+impl<R: Read + Seek> Iterator for RevLines<R> {
     type Item = String;
 
     fn next(&mut self) -> Option<String> {
@@ -139,11 +139,11 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
                             }
 
                             match self.reader.seek(SeekFrom::Current(offset as i64)) {
-                                Ok(_)  => {
+                                Ok(_) => {
                                     self.reader_pos += offset;
 
                                     break 'outer;
-                                },
+                                }
 
                                 Err(_) => return None,
                             }
@@ -153,7 +153,7 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
                     }
                 }
 
-                Err(_) => return None
+                Err(_) => return None,
             }
         }
 
@@ -169,8 +169,8 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
 mod tests {
     use std::fs::File;
 
-    use RevLines;
     use std::io::BufReader;
+    use RevLines;
 
     #[test]
     fn it_handles_empty_files() {
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn it_handles_file_with_one_line() {
-        let file = File::open("tests/one_line_file", ).unwrap();
+        let file = File::open("tests/one_line_file").unwrap();
         let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
 
         assert_eq!(rev_lines.next(), Some("ABCD".to_string()));
