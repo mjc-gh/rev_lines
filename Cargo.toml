@@ -1,11 +1,11 @@
 [package]
 name = "rev_lines"
-version = "0.2.1"
+version = "0.2.2"
 description = "Rust Iterator for reading files line by line with a buffer in reverse"
 repository = "https://github.com/mikeycgto/rev_lines"
 documentation = "https://docs.rs/rev_lines"
 license = "MIT"
-authors = ["Michael Coyne <mikeycgto@gmail.com>"]
+authors = ["Michael Coyne <mjc@hey.com>"]
 keywords = ["lines", "reverse", "reader", "buffer", "iterator"]
 
 [dependencies]
