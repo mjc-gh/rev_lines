@@ -22,6 +22,8 @@
 //!  }
 //! ```
 //!
+//! If a line with invalid UTF-8 is encountered, the iterator will return `None` next, and stop iterating.
+//!
 //! This method uses logic borrowed from [uutils/coreutils
 //! tail](https://github.com/uutils/coreutils/blob/f2166fed0ad055d363aedff6223701001af090d3/src/tail/tail.rs#L399-L402)
 
@@ -159,7 +161,7 @@ impl<R:Read+Seek> Iterator for RevLines<R> {
         result.reverse();
 
         // Convert to a String
-        Some(String::from_utf8(result).unwrap())
+        String::from_utf8(result).ok()
     }
 }
 
@@ -221,6 +223,16 @@ mod tests {
         assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
         assert_eq!(rev_lines.next(), Some("GHIJK".to_string()));
         assert_eq!(rev_lines.next(), Some("ABCDEF".to_string()));
+        assert_eq!(rev_lines.next(), None);
+    }
+
+    #[test]
+    fn it_stops_iteration_on_invalid_utf8() {
+        let file = File::open("tests/invalid_utf8").unwrap();
+        let mut rev_lines = RevLines::with_capacity(5, BufReader::new(file)).unwrap();
+
+        assert_eq!(rev_lines.next(), Some("Valid UTF8".to_string()));
+        assert_eq!(rev_lines.next(), None);
         assert_eq!(rev_lines.next(), None);
     }
 }
