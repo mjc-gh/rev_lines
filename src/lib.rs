@@ -33,8 +33,8 @@ use std::io::{Read, Result, Seek, SeekFrom};
 
 static DEFAULT_SIZE: usize = 4096;
 
-static LF_BYTE: u8 = '\n' as u8;
-static CR_BYTE: u8 = '\r' as u8;
+static LF_BYTE: u8 = b'\n';
+static CR_BYTE: u8 = b'\r';
 
 /// `RevLines` struct
 pub struct RevLines<R> {
@@ -57,7 +57,7 @@ impl<R: Seek + Read> RevLines<R> {
         let reader_size = reader.seek(SeekFrom::End(0))?;
 
         let mut rev_lines = RevLines {
-            reader: reader,
+            reader,
             reader_pos: reader_size,
             buf_size: cap as u64,
         };
@@ -115,7 +115,7 @@ impl<R: Read + Seek> Iterator for RevLines<R> {
 
         'outer: loop {
             if self.reader_pos < 1 {
-                if result.len() > 0 {
+                if !result.is_empty() {
                     break;
                 }
 
@@ -128,7 +128,7 @@ impl<R: Read + Seek> Iterator for RevLines<R> {
 
             match self.read_to_buffer(size) {
                 Ok(buf) => {
-                    for (idx, ch) in (&buf).iter().enumerate().rev() {
+                    for (idx, ch) in buf.iter().enumerate().rev() {
                         // Found a new line character to break on
                         if *ch == LF_BYTE {
                             let mut offset = idx as u64;
@@ -148,7 +148,7 @@ impl<R: Read + Seek> Iterator for RevLines<R> {
                                 Err(_) => return None,
                             }
                         } else {
-                            result.push(ch.clone());
+                            result.push(*ch);
                         }
                     }
                 }
