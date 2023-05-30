@@ -14,7 +14,7 @@
 //!
 //!  fn main() {
 //!      let file = File::open("tests/multi_line_file").unwrap();
-//!      let rev_lines = RevLines::new(BufReader::new(file)).unwrap();
+//!      let rev_lines = RevLines::new(file).unwrap();
 //!
 //!      for line in rev_lines {
 //!          println!("{}", line);
@@ -24,12 +24,10 @@
 //!
 //! If a line with invalid UTF-8 is encountered, the iterator will return `None` next, and stop iterating.
 //!
-//! This method uses logic borrowed from [uutils/coreutils
-//! tail](https://github.com/uutils/coreutils/blob/f2166fed0ad055d363aedff6223701001af090d3/src/tail/tail.rs#L399-L402)
+//! This method uses logic borrowed from [uutils/coreutils tail](https://github.com/uutils/coreutils/blob/f2166fed0ad055d363aedff6223701001af090d3/src/tail/tail.rs#L399-L402)
 
 use std::cmp::min;
-use std::io::BufReader;
-use std::io::{Read, Result, Seek, SeekFrom};
+use std::io::{BufReader, Read, Result, Seek, SeekFrom};
 
 static DEFAULT_SIZE: usize = 4096;
 
@@ -44,20 +42,20 @@ pub struct RevLines<R> {
 }
 
 impl<R: Seek + Read> RevLines<R> {
-    /// Create a new `RevLines` struct from a `BufReader<R>`. Internal
-    /// buffering for iteration will default to 4096 bytes at a time.
-    pub fn new(reader: BufReader<R>) -> Result<RevLines<R>> {
+    /// Create a new `RevLines` struct from a Reader.
+    /// Internal buffering for iteration will default to 4096 bytes at a time.
+    pub fn new(reader: R) -> Result<RevLines<R>> {
         RevLines::with_capacity(DEFAULT_SIZE, reader)
     }
 
-    /// Create a new `RevLines` struct from a `BufReader<R>`. Interal
-    /// buffering for iteration will use `cap` bytes at a time.
-    pub fn with_capacity(cap: usize, mut reader: BufReader<R>) -> Result<RevLines<R>> {
+    /// Create a new `RevLines` struct from a Reader`.
+    /// Internal buffering for iteration will use `cap` bytes at a time.
+    pub fn with_capacity(cap: usize, mut reader: R) -> Result<RevLines<R>> {
         // Seek to end of reader now
         let reader_size = reader.seek(SeekFrom::End(0))?;
 
         let mut rev_lines = RevLines {
-            reader,
+            reader: BufReader::new(reader),
             reader_pos: reader_size,
             buf_size: cap as u64,
         };
@@ -169,13 +167,12 @@ impl<R: Read + Seek> Iterator for RevLines<R> {
 mod tests {
     use std::fs::File;
 
-    use std::io::BufReader;
     use RevLines;
 
     #[test]
     fn it_handles_empty_files() {
         let file = File::open("tests/empty_file").unwrap();
-        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
+        let mut rev_lines = RevLines::new(file).unwrap();
 
         assert_eq!(rev_lines.next(), None);
     }
@@ -183,7 +180,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_one_line() {
         let file = File::open("tests/one_line_file").unwrap();
-        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
+        let mut rev_lines = RevLines::new(file).unwrap();
 
         assert_eq!(rev_lines.next(), Some("ABCD".to_string()));
         assert_eq!(rev_lines.next(), None);
@@ -192,7 +189,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_multi_lines() {
         let file = File::open("tests/multi_line_file").unwrap();
-        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
+        let mut rev_lines = RevLines::new(file).unwrap();
 
         assert_eq!(rev_lines.next(), Some("UVWXYZ".to_string()));
         assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
@@ -204,7 +201,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_blank_lines() {
         let file = File::open("tests/blank_line_file").unwrap();
-        let mut rev_lines = RevLines::new(BufReader::new(file)).unwrap();
+        let mut rev_lines = RevLines::new(file).unwrap();
 
         assert_eq!(rev_lines.next(), Some("".to_string()));
         assert_eq!(rev_lines.next(), Some("".to_string()));
@@ -217,7 +214,7 @@ mod tests {
     #[test]
     fn it_handles_file_with_multi_lines_and_with_capacity() {
         let file = File::open("tests/multi_line_file").unwrap();
-        let mut rev_lines = RevLines::with_capacity(5, BufReader::new(file)).unwrap();
+        let mut rev_lines = RevLines::with_capacity(5, file).unwrap();
 
         assert_eq!(rev_lines.next(), Some("UVWXYZ".to_string()));
         assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
