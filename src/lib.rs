@@ -14,10 +14,10 @@
 //!
 //!  fn main() {
 //!      let file = File::open("tests/multi_line_file").unwrap();
-//!      let rev_lines = RevLines::new(file).unwrap();
+//!      let rev_lines = RevLines::new(file);
 //!
 //!      for line in rev_lines {
-//!          println!("{}", line);
+//!          println!("{:?}", line);
 //!      }
 //!  }
 //! ```
@@ -44,44 +44,47 @@ pub struct RevLines<R> {
 impl<R: Seek + Read> RevLines<R> {
     /// Create a new `RevLines` struct from a Reader.
     /// Internal buffering for iteration will default to 4096 bytes at a time.
-    pub fn new(reader: R) -> Result<RevLines<R>> {
+    pub fn new(reader: R) -> RevLines<R> {
         RevLines::with_capacity(DEFAULT_SIZE, reader)
     }
 
     /// Create a new `RevLines` struct from a Reader`.
     /// Internal buffering for iteration will use `cap` bytes at a time.
-    pub fn with_capacity(cap: usize, mut reader: R) -> Result<RevLines<R>> {
-        // Seek to end of reader now
-        let reader_size = reader.seek(SeekFrom::End(0))?;
-
-        let mut rev_lines = RevLines {
+    pub fn with_capacity(cap: usize, reader: R) -> RevLines<R> {
+        RevLines {
             reader: BufReader::new(reader),
-            reader_pos: reader_size,
+            reader_pos: u64::MAX,
             buf_size: cap as u64,
-        };
+        }
+    }
+
+    fn init_reader(&mut self) -> Result<()> {
+        // Seek to end of reader now
+        let reader_size = self.reader.seek(SeekFrom::End(0))?;
+        self.reader_pos = reader_size;
 
         // Handle any trailing new line characters for the reader
         // so the first next call does not return Some("")
 
         // Read at most 2 bytes
         let end_size = min(reader_size, 2);
-        let end_buf = rev_lines.read_to_buffer(end_size)?;
+        let end_buf = self.read_to_buffer(end_size)?;
 
         if end_size == 1 {
             if end_buf[0] != LF_BYTE {
-                rev_lines.move_reader_position(1)?;
+                self.move_reader_position(1)?;
             }
         } else if end_size == 2 {
             if end_buf[0] != CR_BYTE {
-                rev_lines.move_reader_position(1)?;
+                self.move_reader_position(1)?;
             }
 
             if end_buf[1] != LF_BYTE {
-                rev_lines.move_reader_position(1)?;
+                self.move_reader_position(1)?;
             }
         }
 
-        Ok(rev_lines)
+        Ok(())
     }
 
     fn read_to_buffer(&mut self, size: u64) -> Result<Vec<u8>> {
@@ -103,12 +106,12 @@ impl<R: Seek + Read> RevLines<R> {
 
         Ok(())
     }
-}
 
-impl<R: Read + Seek> Iterator for RevLines<R> {
-    type Item = String;
+    fn next_line(&mut self) -> Result<Option<Vec<u8>>> {
+        if self.reader_pos == u64::MAX {
+            self.init_reader()?;
+        }
 
-    fn next(&mut self) -> Option<String> {
         let mut result: Vec<u8> = Vec::new();
 
         'outer: loop {
@@ -117,119 +120,140 @@ impl<R: Read + Seek> Iterator for RevLines<R> {
                     break;
                 }
 
-                return None;
+                return Ok(None);
             }
 
             // Read the of minimum between the desired
             // buffer size or remaining length of the reader
             let size = min(self.buf_size, self.reader_pos);
 
-            match self.read_to_buffer(size) {
-                Ok(buf) => {
-                    for (idx, ch) in buf.iter().enumerate().rev() {
-                        // Found a new line character to break on
-                        if *ch == LF_BYTE {
-                            let mut offset = idx as u64;
+            let buf = self.read_to_buffer(size)?;
+            for (idx, ch) in buf.iter().enumerate().rev() {
+                // Found a new line character to break on
+                if *ch == LF_BYTE {
+                    let mut offset = idx as u64;
 
-                            // Add an extra byte cause of CR character
-                            if idx > 1 && buf[idx - 1] == CR_BYTE {
-                                offset -= 1;
-                            }
-
-                            match self.reader.seek(SeekFrom::Current(offset as i64)) {
-                                Ok(_) => {
-                                    self.reader_pos += offset;
-
-                                    break 'outer;
-                                }
-
-                                Err(_) => return None,
-                            }
-                        } else {
-                            result.push(*ch);
-                        }
+                    // Add an extra byte cause of CR character
+                    if idx > 1 && buf[idx - 1] == CR_BYTE {
+                        offset -= 1;
                     }
-                }
 
-                Err(_) => return None,
+                    self.reader.seek(SeekFrom::Current(offset as i64))?;
+                    self.reader_pos += offset;
+
+                    break 'outer;
+                } else {
+                    result.push(*ch);
+                }
             }
         }
 
         // Reverse the results since they were written backwards
         result.reverse();
 
-        // Convert to a String
-        String::from_utf8(result).ok()
+        Ok(Some(result))
+    }
+}
+
+impl<R: Read + Seek> Iterator for RevLines<R> {
+    type Item = Result<Vec<u8>>;
+
+    fn next(&mut self) -> Option<Result<Vec<u8>>> {
+        self.next_line().transpose()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
+    use std::{
+        fs::File,
+        io::{BufReader, Cursor},
+    };
 
-    use RevLines;
+    use crate::RevLines;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn it_handles_empty_files() {
-        let file = File::open("tests/empty_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+    fn it_handles_empty_files() -> TestResult {
+        let file = File::open("tests/empty_file")?;
+        let mut rev_lines = RevLines::new(file);
 
-        assert_eq!(rev_lines.next(), None);
+        assert!(rev_lines.next().transpose()?.is_none());
+
+        Ok(())
     }
 
     #[test]
-    fn it_handles_file_with_one_line() {
-        let file = File::open("tests/one_line_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+    fn it_handles_file_with_one_line() -> TestResult {
+        let file = File::open("tests/one_line_file")?;
+        let mut rev_lines = RevLines::new(file);
 
-        assert_eq!(rev_lines.next(), Some("ABCD".to_string()));
-        assert_eq!(rev_lines.next(), None);
+        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCD".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, None);
+
+        Ok(())
     }
 
     #[test]
-    fn it_handles_file_with_multi_lines() {
-        let file = File::open("tests/multi_line_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+    fn it_handles_file_with_multi_lines() -> TestResult {
+        let file = File::open("tests/multi_line_file")?;
+        let mut rev_lines = RevLines::new(file);
 
-        assert_eq!(rev_lines.next(), Some("UVWXYZ".to_string()));
-        assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
-        assert_eq!(rev_lines.next(), Some("GHIJK".to_string()));
-        assert_eq!(rev_lines.next(), Some("ABCDEF".to_string()));
-        assert_eq!(rev_lines.next(), None);
+        assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"LMNOPQRST".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, None);
+
+        Ok(())
     }
 
     #[test]
-    fn it_handles_file_with_blank_lines() {
-        let file = File::open("tests/blank_line_file").unwrap();
-        let mut rev_lines = RevLines::new(file).unwrap();
+    fn it_handles_file_with_blank_lines() -> TestResult {
+        let file = File::open("tests/blank_line_file")?;
+        let mut rev_lines = RevLines::new(file);
 
-        assert_eq!(rev_lines.next(), Some("".to_string()));
-        assert_eq!(rev_lines.next(), Some("".to_string()));
-        assert_eq!(rev_lines.next(), Some("XYZ".to_string()));
-        assert_eq!(rev_lines.next(), Some("".to_string()));
-        assert_eq!(rev_lines.next(), Some("ABCD".to_string()));
-        assert_eq!(rev_lines.next(), None);
+        assert_eq!(rev_lines.next().transpose()?, Some(b"".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"XYZ".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCD".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, None);
+
+        Ok(())
     }
 
     #[test]
-    fn it_handles_file_with_multi_lines_and_with_capacity() {
-        let file = File::open("tests/multi_line_file").unwrap();
-        let mut rev_lines = RevLines::with_capacity(5, file).unwrap();
+    fn it_handles_file_with_multi_lines_and_with_capacity() -> TestResult {
+        let file = File::open("tests/multi_line_file")?;
+        let mut rev_lines = RevLines::with_capacity(5, file);
 
-        assert_eq!(rev_lines.next(), Some("UVWXYZ".to_string()));
-        assert_eq!(rev_lines.next(), Some("LMNOPQRST".to_string()));
-        assert_eq!(rev_lines.next(), Some("GHIJK".to_string()));
-        assert_eq!(rev_lines.next(), Some("ABCDEF".to_string()));
-        assert_eq!(rev_lines.next(), None);
+        assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"LMNOPQRST".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, None);
+
+        Ok(())
     }
 
     #[test]
-    fn it_stops_iteration_on_invalid_utf8() {
-        let file = File::open("tests/invalid_utf8").unwrap();
-        let mut rev_lines = RevLines::with_capacity(5, file).unwrap();
+    fn it_handles_file_with_invalid_utf8() -> TestResult {
+        let file = BufReader::new(Cursor::new(vec![
+            b'A', b'B', b'C', b'D', b'E', b'F', b'\n', // some valid UTF-8 in this line
+            b'X', 252, 253, 254, b'Y', b'\n', // invalid UTF-8 in this line
+            b'G', b'H', b'I', b'J', b'K', b'\n', // some more valid UTF-8 at the end
+        ]));
+        let mut rev_lines = RevLines::new(file);
+        assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
+        assert_eq!(
+            rev_lines.next().transpose()?,
+            Some(vec![b'X', 252, 253, 254, b'Y'])
+        );
+        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
+        assert_eq!(rev_lines.next().transpose()?, None);
 
-        assert_eq!(rev_lines.next(), Some("Valid UTF8".to_string()));
-        assert_eq!(rev_lines.next(), None);
-        assert_eq!(rev_lines.next(), None);
+        Ok(())
     }
 }
