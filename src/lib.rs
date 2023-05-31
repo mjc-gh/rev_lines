@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn it_stops_iteration_on_invalid_utf8() {
         let file = File::open("tests/invalid_utf8").unwrap();
-        let mut rev_lines = RevLines::with_capacity(5, BufReader::new(file)).unwrap();
+        let mut rev_lines = RevLines::with_capacity(5, file).unwrap();
 
         assert_eq!(rev_lines.next(), Some("Valid UTF8".to_string()));
         assert_eq!(rev_lines.next(), None);
