@@ -13,7 +13,7 @@
 //!  use std::fs::File;
 //!
 //!  fn main() {
-//!      let file = File::open("tests/multi_line_file").unwrap();
+//!      let file = File::open("README.md").unwrap();
 //!      let rev_lines = RevLines::new(file);
 //!
 //!      for line in rev_lines {
@@ -165,10 +165,7 @@ impl<R: Read + Seek> Iterator for RevLines<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs::File,
-        io::{BufReader, Cursor},
-    };
+    use std::io::{BufReader, Cursor};
 
     use crate::RevLines;
 
@@ -176,7 +173,7 @@ mod tests {
 
     #[test]
     fn it_handles_empty_files() -> TestResult {
-        let file = File::open("tests/empty_file")?;
+        let file = Cursor::new(Vec::new());
         let mut rev_lines = RevLines::new(file);
 
         assert!(rev_lines.next().transpose()?.is_none());
@@ -186,7 +183,7 @@ mod tests {
 
     #[test]
     fn it_handles_file_with_one_line() -> TestResult {
-        let file = File::open("tests/one_line_file")?;
+        let file = Cursor::new(b"ABCD\n".to_vec());
         let mut rev_lines = RevLines::new(file);
 
         assert_eq!(rev_lines.next().transpose()?, Some(b"ABCD".to_vec()));
@@ -197,7 +194,7 @@ mod tests {
 
     #[test]
     fn it_handles_file_with_multi_lines() -> TestResult {
-        let file = File::open("tests/multi_line_file")?;
+        let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
         let mut rev_lines = RevLines::new(file);
 
         assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
@@ -211,7 +208,7 @@ mod tests {
 
     #[test]
     fn it_handles_file_with_blank_lines() -> TestResult {
-        let file = File::open("tests/blank_line_file")?;
+        let file = Cursor::new(b"ABCD\n\nXYZ\n\n\n".to_vec());
         let mut rev_lines = RevLines::new(file);
 
         assert_eq!(rev_lines.next().transpose()?, Some(b"".to_vec()));
@@ -226,7 +223,7 @@ mod tests {
 
     #[test]
     fn it_handles_file_with_multi_lines_and_with_capacity() -> TestResult {
-        let file = File::open("tests/multi_line_file")?;
+        let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
         let mut rev_lines = RevLines::with_capacity(5, file);
 
         assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
