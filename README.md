@@ -7,11 +7,11 @@
 This library provides a small Rust Iterator for reading files line by
 line with a buffer in reverse
 
-### Documentation
+## Documentation
 
 Documentation is available on [Docs.rs](https://docs.rs/rev_lines).
 
-### Example
+## Example
 
 ```rust
 extern crate rev_lines;
