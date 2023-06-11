@@ -9,3 +9,4 @@ authors = ["Michael Coyne <mjc@hey.com>"]
 keywords = ["lines", "reverse", "reader", "buffer", "iterator"]
 
 [dependencies]
+thiserror = "1.0.40"
