@@ -41,7 +41,7 @@ static CR_BYTE: u8 = b'\r';
 pub struct RawRevLines<R> {
     reader: BufReader<R>,
     reader_pos: u64,
-    buf_size: u64,
+    buffer: Vec<u8>,
 }
 
 impl<R: Seek + Read> RawRevLines<R> {
@@ -57,7 +57,7 @@ impl<R: Seek + Read> RawRevLines<R> {
         RawRevLines {
             reader: BufReader::new(reader),
             reader_pos: u64::MAX,
-            buf_size: cap as u64,
+            buffer: vec![0; cap],
         }
     }
 
@@ -71,18 +71,18 @@ impl<R: Seek + Read> RawRevLines<R> {
 
         // Read at most 2 bytes
         let end_size = min(reader_size, 2);
-        let end_buf = self.read_to_buffer(end_size)?;
+        self.read_to_buffer(end_size)?;
 
         if end_size == 1 {
-            if end_buf[0] != LF_BYTE {
+            if self.buffer[0] != LF_BYTE {
                 self.move_reader_position(1)?;
             }
         } else if end_size == 2 {
-            if end_buf[0] != CR_BYTE {
+            if self.buffer[0] != CR_BYTE {
                 self.move_reader_position(1)?;
             }
 
-            if end_buf[1] != LF_BYTE {
+            if self.buffer[1] != LF_BYTE {
                 self.move_reader_position(1)?;
             }
         }
@@ -90,17 +90,17 @@ impl<R: Seek + Read> RawRevLines<R> {
         Ok(())
     }
 
-    fn read_to_buffer(&mut self, size: u64) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0; size as usize];
+    fn read_to_buffer(&mut self, size: u64) -> io::Result<()> {
         let offset = -(size as i64);
 
         self.reader.seek(SeekFrom::Current(offset))?;
-        self.reader.read_exact(&mut buf[0..(size as usize)])?;
+        self.reader
+            .read_exact(&mut self.buffer[0..(size as usize)])?;
         self.reader.seek(SeekFrom::Current(offset))?;
 
         self.reader_pos -= size;
 
-        Ok(buf)
+        Ok(())
     }
 
     fn move_reader_position(&mut self, offset: u64) -> io::Result<()> {
@@ -128,16 +128,16 @@ impl<R: Seek + Read> RawRevLines<R> {
 
             // Read the of minimum between the desired
             // buffer size or remaining length of the reader
-            let size = min(self.buf_size, self.reader_pos);
+            let size = min(self.buffer.len() as u64, self.reader_pos);
 
-            let buf = self.read_to_buffer(size)?;
-            for (idx, ch) in buf.iter().enumerate().rev() {
+            self.read_to_buffer(size)?;
+            for (idx, ch) in self.buffer.iter().take(size as usize).enumerate().rev() {
                 // Found a new line character to break on
                 if *ch == LF_BYTE {
                     let mut offset = idx as u64;
 
                     // Add an extra byte cause of CR character
-                    if idx > 1 && buf[idx - 1] == CR_BYTE {
+                    if idx > 1 && self.buffer[idx - 1] == CR_BYTE {
                         offset -= 1;
                     }
 
