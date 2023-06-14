@@ -1,4 +1,7 @@
-on: [push, pull_request]
+on:
+  pull_request:
+  push:
+    branches: main
 
 name: rev-lines
 
@@ -27,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
@@ -46,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
@@ -67,3 +70,67 @@ jobs:
         with:
           command: clippy
           args: -- -D warnings
+
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Set up valgrind (for iai)
+        run: |
+          sudo apt install -y valgrind
+
+      - name: Checkout main branch
+        uses: actions/checkout@v3
+        with:
+          ref: main
+
+      - name: Run bench on main branch
+        run: |
+          cargo bench --bench iai | tee /tmp/previous
+
+      - name: Checkout current commit
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.sha }}
+          clean: "false"
+
+      - name: Run current bench
+        run: |
+          cargo bench --bench iai | tee /tmp/current
+
+      - name: Write result in PR
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+
+            // read the output file
+            const previous = fs.readFileSync('/tmp/previous', {encoding:'utf8', flag:'r'});
+            const current = fs.readFileSync('/tmp/current', {encoding:'utf8', flag:'r'});
+
+            // form message
+            const message = '## Benchmarks\n Previous:\n\n```\n' + previous + '\n```\n Current:\n```\n' + current + '\n```';
+
+            // if there is a PR, post a comment, if we are merging to main, post a commit comment for posterity
+            if ('${{ github.event_name }}' === 'pull_request') {
+              github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: message
+              })
+            } else if ('${{ github.event_name }}' === 'push' && '${{ github.ref }}' === 'refs/heads/main') {
+              github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: '${{ github.sha }}',
+                body: message
+              })
+            }
