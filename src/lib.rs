@@ -41,7 +41,8 @@ static CR_BYTE: u8 = b'\r';
 pub struct RawRevLines<R> {
     reader: BufReader<R>,
     reader_pos: u64,
-    buf_size: u64,
+    buffer: Vec<u8>,
+    buffer_pos: usize,
 }
 
 impl<R: Seek + Read> RawRevLines<R> {
@@ -57,60 +58,55 @@ impl<R: Seek + Read> RawRevLines<R> {
         RawRevLines {
             reader: BufReader::new(reader),
             reader_pos: u64::MAX,
-            buf_size: cap as u64,
+            buffer: vec![0; cap],
+            buffer_pos: 0,
         }
     }
 
     fn init_reader(&mut self) -> io::Result<()> {
         // Seek to end of reader now
-        let reader_size = self.reader.seek(SeekFrom::End(0))?;
-        self.reader_pos = reader_size;
+        self.reader_pos = self.reader.seek(SeekFrom::End(0))?;
+
+        self.read_to_buffer()?;
 
         // Handle any trailing new line characters for the reader
         // so the first next call does not return Some("")
-
-        // Read at most 2 bytes
-        let end_size = min(reader_size, 2);
-        let end_buf = self.read_to_buffer(end_size)?;
-
-        if end_size == 1 {
-            if end_buf[0] != LF_BYTE {
-                self.move_reader_position(1)?;
-            }
-        } else if end_size == 2 {
-            if end_buf[0] != CR_BYTE {
-                self.move_reader_position(1)?;
-            }
-
-            if end_buf[1] != LF_BYTE {
-                self.move_reader_position(1)?;
+        if self.buffer_pos > 0 {
+            if let Some(last_byte) = self.buffer.get(self.buffer_pos - 1) {
+                if *last_byte == LF_BYTE {
+                    self.buffer_pos -= 1;
+                    if self.buffer_pos > 0 {
+                        if let Some(second_to_last_byte) = self.buffer.get(self.buffer_pos - 1) {
+                            if *second_to_last_byte == CR_BYTE {
+                                self.buffer_pos -= 1;
+                            }
+                        }
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    fn read_to_buffer(&mut self, size: u64) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0; size as usize];
+    fn read_to_buffer(&mut self) -> io::Result<()> {
+        let size = min(self.buffer.len() as u64, self.reader_pos);
         let offset = -(size as i64);
 
+        // TODO: we only need one seek
         self.reader.seek(SeekFrom::Current(offset))?;
-        self.reader.read_exact(&mut buf[0..(size as usize)])?;
+        self.reader
+            .read_exact(&mut self.buffer[0..(size as usize)])?;
         self.reader.seek(SeekFrom::Current(offset))?;
 
         self.reader_pos -= size;
-
-        Ok(buf)
-    }
-
-    fn move_reader_position(&mut self, offset: u64) -> io::Result<()> {
-        self.reader.seek(SeekFrom::Current(offset as i64))?;
-        self.reader_pos += offset;
+        self.buffer_pos = size as usize;
 
         Ok(())
     }
 
     fn next_line(&mut self) -> io::Result<Option<Vec<u8>>> {
+        // TODO: make self.reader_pos an Option, handle None in a helper method
         if self.reader_pos == u64::MAX {
             self.init_reader()?;
         }
@@ -118,32 +114,25 @@ impl<R: Seek + Read> RawRevLines<R> {
         let mut result: Vec<u8> = Vec::new();
 
         'outer: loop {
-            if self.reader_pos < 1 {
-                if !result.is_empty() {
-                    break;
-                }
-
-                return Ok(None);
+            // Current buffer was read to completion, read new contents
+            if self.buffer_pos == 0 {
+                // Read the of minimum between the desired
+                // buffer size or remaining length of the reader
+                self.read_to_buffer()?;
             }
 
-            // Read the of minimum between the desired
-            // buffer size or remaining length of the reader
-            let size = min(self.buf_size, self.reader_pos);
+            if self.buffer_pos == 0 {
+                if result.is_empty() {
+                    return Ok(None);
+                } else {
+                    break;
+                }
+            }
 
-            let buf = self.read_to_buffer(size)?;
-            for (idx, ch) in buf.iter().enumerate().rev() {
+            for ch in self.buffer[..self.buffer_pos].iter().rev() {
+                self.buffer_pos -= 1;
                 // Found a new line character to break on
-                if *ch == LF_BYTE {
-                    let mut offset = idx as u64;
-
-                    // Add an extra byte cause of CR character
-                    if idx > 1 && buf[idx - 1] == CR_BYTE {
-                        offset -= 1;
-                    }
-
-                    self.reader.seek(SeekFrom::Current(offset as i64))?;
-                    self.reader_pos += offset;
-
+                if *ch == LF_BYTE || *ch == CR_BYTE {
                     break 'outer;
                 } else {
                     result.push(*ch);
@@ -223,25 +212,31 @@ mod tests {
 
     #[test]
     fn raw_handles_file_with_one_line() -> TestResult {
-        let file = Cursor::new(b"ABCD\n".to_vec());
-        let mut rev_lines = RawRevLines::new(file);
+        let text = b"ABCD\n".to_vec();
+        for cap in 1..(text.len() + 1) {
+            let file = Cursor::new(&text);
+            let mut rev_lines = RawRevLines::with_capacity(cap, file);
 
-        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCD".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, None);
+            assert_eq!(rev_lines.next().transpose()?, Some(b"ABCD".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, None);
+        }
 
         Ok(())
     }
 
     #[test]
     fn raw_handles_file_with_multi_lines() -> TestResult {
-        let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
-        let mut rev_lines = RawRevLines::new(file);
+        let text = b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec();
+        for cap in 1..(text.len() + 1) {
+            let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
+            let mut rev_lines = RawRevLines::with_capacity(cap, file);
 
-        assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, Some(b"LMNOPQRST".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, None);
+            assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, Some(b"LMNOPQRST".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, None);
+        }
 
         Ok(())
     }
