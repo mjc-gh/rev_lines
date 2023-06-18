@@ -40,9 +40,10 @@ static CR_BYTE: u8 = b'\r';
 /// `RevLines` struct
 pub struct RawRevLines<R> {
     reader: BufReader<R>,
-    reader_pos: u64,
+    reader_cursor: u64,
     buffer: Vec<u8>,
-    buffer_pos: usize,
+    buffer_end: usize,
+    read_len: u64,
     was_last_byte_line_feed: bool,
 }
 
@@ -58,25 +59,32 @@ impl<R: Seek + Read> RawRevLines<R> {
     pub fn with_capacity(cap: usize, reader: R) -> RawRevLines<R> {
         RawRevLines {
             reader: BufReader::new(reader),
-            reader_pos: u64::MAX,
+            reader_cursor: u64::MAX,
             buffer: vec![0; cap],
-            buffer_pos: 0,
+            buffer_end: 0,
+            read_len: 0,
             was_last_byte_line_feed: false,
         }
     }
 
     fn init_reader(&mut self) -> io::Result<()> {
-        // Seek to end of reader now
-        self.reader_pos = self.reader.seek(SeekFrom::End(0))?;
+        // Move cursor to the end of the file and store the cursor position
+        self.reader_cursor = self.reader.seek(SeekFrom::End(0))?;
+        // Next read will be the full buffer size or the remaining bytes in the file
+        self.read_len = min(self.buffer.len() as u64, self.reader_cursor);
+        // Move cursor just before the next bytes to read
+        self.reader.seek_relative(-(self.read_len as i64))?;
+        // Update the cursor position
+        self.reader_cursor -= self.read_len;
 
         self.read_to_buffer()?;
 
         // Handle any trailing new line characters for the reader
         // so the first next call does not return Some("")
-        if self.buffer_pos > 0 {
-            if let Some(last_byte) = self.buffer.get(self.buffer_pos - 1) {
+        if self.buffer_end > 0 {
+            if let Some(last_byte) = self.buffer.get(self.buffer_end - 1) {
                 if *last_byte == LF_BYTE {
-                    self.buffer_pos -= 1;
+                    self.buffer_end -= 1;
                     self.was_last_byte_line_feed = true;
                 }
             }
@@ -86,24 +94,29 @@ impl<R: Seek + Read> RawRevLines<R> {
     }
 
     fn read_to_buffer(&mut self) -> io::Result<()> {
-        let size = min(self.buffer.len() as u64, self.reader_pos);
-        let offset = -(size as i64);
-
-        // TODO: we only need one seek
-        self.reader.seek_relative(offset)?;
+        // Read the next bytes into the buffer, self.read_len was already prepared for that
         self.reader
-            .read_exact(&mut self.buffer[0..(size as usize)])?;
-        self.reader.seek_relative(offset)?;
+            .read_exact(&mut self.buffer[0..(self.read_len as usize)])?;
+        // Specify which part of the buffer is valid
+        self.buffer_end = self.read_len as usize;
 
-        self.reader_pos -= size;
-        self.buffer_pos = size as usize;
+        // Determine what the next read length will be
+        let next_read_len = min(self.buffer.len() as u64, self.reader_cursor);
+        // Move the cursor just in front of the next read
+        self.reader
+            .seek_relative(-(self.read_len as i64 + next_read_len as i64))?;
+        // Update cursor position
+        self.reader_cursor -= next_read_len;
+
+        // Store the next read length, it'll be used in the next call
+        self.read_len = next_read_len;
 
         Ok(())
     }
 
     fn next_line(&mut self) -> io::Result<Option<Vec<u8>>> {
         // TODO: make self.reader_pos an Option, handle None in a helper method
-        if self.reader_pos == u64::MAX {
+        if self.reader_cursor == u64::MAX {
             self.init_reader()?;
         }
 
@@ -111,13 +124,14 @@ impl<R: Seek + Read> RawRevLines<R> {
 
         'outer: loop {
             // Current buffer was read to completion, read new contents
-            if self.buffer_pos == 0 {
+            if self.buffer_end == 0 {
                 // Read the of minimum between the desired
                 // buffer size or remaining length of the reader
                 self.read_to_buffer()?;
             }
 
-            if self.buffer_pos == 0 {
+            // If buffer_end is still 0, it means the reader is empty
+            if self.buffer_end == 0 {
                 if result.is_empty() {
                     return Ok(None);
                 } else {
@@ -125,8 +139,8 @@ impl<R: Seek + Read> RawRevLines<R> {
                 }
             }
 
-            for ch in self.buffer[..self.buffer_pos].iter().rev() {
-                self.buffer_pos -= 1;
+            for ch in self.buffer[..self.buffer_end].iter().rev() {
+                self.buffer_end -= 1;
                 // Found a new line character to break on
                 if *ch == LF_BYTE {
                     self.was_last_byte_line_feed = true;
