@@ -90,10 +90,10 @@ impl<R: Seek + Read> RawRevLines<R> {
         let offset = -(size as i64);
 
         // TODO: we only need one seek
-        self.reader.seek(SeekFrom::Current(offset))?;
+        self.reader.seek_relative(offset)?;
         self.reader
             .read_exact(&mut self.buffer[0..(size as usize)])?;
-        self.reader.seek(SeekFrom::Current(offset))?;
+        self.reader.seek_relative(offset)?;
 
         self.reader_pos -= size;
         self.buffer_pos = size as usize;
