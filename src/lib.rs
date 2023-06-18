@@ -43,6 +43,7 @@ pub struct RawRevLines<R> {
     reader_pos: u64,
     buffer: Vec<u8>,
     buffer_pos: usize,
+    was_last_byte_line_feed: bool,
 }
 
 impl<R: Seek + Read> RawRevLines<R> {
@@ -60,6 +61,7 @@ impl<R: Seek + Read> RawRevLines<R> {
             reader_pos: u64::MAX,
             buffer: vec![0; cap],
             buffer_pos: 0,
+            was_last_byte_line_feed: false,
         }
     }
 
@@ -75,13 +77,7 @@ impl<R: Seek + Read> RawRevLines<R> {
             if let Some(last_byte) = self.buffer.get(self.buffer_pos - 1) {
                 if *last_byte == LF_BYTE {
                     self.buffer_pos -= 1;
-                    if self.buffer_pos > 0 {
-                        if let Some(second_to_last_byte) = self.buffer.get(self.buffer_pos - 1) {
-                            if *second_to_last_byte == CR_BYTE {
-                                self.buffer_pos -= 1;
-                            }
-                        }
-                    }
+                    self.was_last_byte_line_feed = true;
                 }
             }
         }
@@ -132,11 +128,15 @@ impl<R: Seek + Read> RawRevLines<R> {
             for ch in self.buffer[..self.buffer_pos].iter().rev() {
                 self.buffer_pos -= 1;
                 // Found a new line character to break on
-                if *ch == LF_BYTE || *ch == CR_BYTE {
+                if *ch == LF_BYTE {
+                    self.was_last_byte_line_feed = true;
                     break 'outer;
-                } else {
+                }
+                // If previous byte was line feed, skip carriage return
+                if *ch != CR_BYTE || !self.was_last_byte_line_feed {
                     result.push(*ch);
                 }
+                self.was_last_byte_line_feed = false;
             }
         }
 
@@ -242,6 +242,23 @@ mod tests {
     }
 
     #[test]
+    fn raw_handles_windows_file_with_multi_lines() -> TestResult {
+        let text = b"ABCDEF\r\nGHIJK\r\nLMNOP\rQRST\r\nUVWXYZ\r\n".to_vec();
+        for cap in 1..(text.len() + 1) {
+            let file = Cursor::new(&text);
+            let mut rev_lines = RawRevLines::with_capacity(cap, file);
+
+            assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, Some(b"LMNOP\rQRST".to_vec())); // bare CR not stripped
+            assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
+            assert_eq!(rev_lines.next().transpose()?, None);
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn raw_handles_file_with_blank_lines() -> TestResult {
         let file = Cursor::new(b"ABCD\n\nXYZ\n\n\n".to_vec());
         let mut rev_lines = RawRevLines::new(file);
@@ -251,20 +268,6 @@ mod tests {
         assert_eq!(rev_lines.next().transpose()?, Some(b"XYZ".to_vec()));
         assert_eq!(rev_lines.next().transpose()?, Some(b"".to_vec()));
         assert_eq!(rev_lines.next().transpose()?, Some(b"ABCD".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, None);
-
-        Ok(())
-    }
-
-    #[test]
-    fn raw_handles_file_with_multi_lines_and_with_capacity() -> TestResult {
-        let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
-        let mut rev_lines = RawRevLines::with_capacity(5, file);
-
-        assert_eq!(rev_lines.next().transpose()?, Some(b"UVWXYZ".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, Some(b"LMNOPQRST".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, Some(b"GHIJK".to_vec()));
-        assert_eq!(rev_lines.next().transpose()?, Some(b"ABCDEF".to_vec()));
         assert_eq!(rev_lines.next().transpose()?, None);
 
         Ok(())
