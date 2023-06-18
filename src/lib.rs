@@ -43,7 +43,7 @@ pub struct RawRevLines<R> {
     reader_cursor: u64,
     buffer: Vec<u8>,
     buffer_end: usize,
-    read_len: u64,
+    read_len: usize,
     was_last_byte_line_feed: bool,
 }
 
@@ -71,11 +71,11 @@ impl<R: Seek + Read> RawRevLines<R> {
         // Move cursor to the end of the file and store the cursor position
         self.reader_cursor = self.reader.seek(SeekFrom::End(0))?;
         // Next read will be the full buffer size or the remaining bytes in the file
-        self.read_len = min(self.buffer.len() as u64, self.reader_cursor);
+        self.read_len = min(self.buffer.len(), self.reader_cursor as usize);
         // Move cursor just before the next bytes to read
         self.reader.seek_relative(-(self.read_len as i64))?;
         // Update the cursor position
-        self.reader_cursor -= self.read_len;
+        self.reader_cursor -= self.read_len as u64;
 
         self.read_to_buffer()?;
 
@@ -95,18 +95,17 @@ impl<R: Seek + Read> RawRevLines<R> {
 
     fn read_to_buffer(&mut self) -> io::Result<()> {
         // Read the next bytes into the buffer, self.read_len was already prepared for that
-        self.reader
-            .read_exact(&mut self.buffer[0..(self.read_len as usize)])?;
+        self.reader.read_exact(&mut self.buffer[0..self.read_len])?;
         // Specify which part of the buffer is valid
-        self.buffer_end = self.read_len as usize;
+        self.buffer_end = self.read_len;
 
         // Determine what the next read length will be
-        let next_read_len = min(self.buffer.len() as u64, self.reader_cursor);
+        let next_read_len = min(self.buffer.len(), self.reader_cursor as usize);
         // Move the cursor just in front of the next read
         self.reader
-            .seek_relative(-(self.read_len as i64 + next_read_len as i64))?;
+            .seek_relative(-((self.read_len + next_read_len) as i64))?;
         // Update cursor position
-        self.reader_cursor -= next_read_len;
+        self.reader_cursor -= next_read_len as u64;
 
         // Store the next read length, it'll be used in the next call
         self.read_len = next_read_len;
@@ -115,7 +114,9 @@ impl<R: Seek + Read> RawRevLines<R> {
     }
 
     fn next_line(&mut self) -> io::Result<Option<Vec<u8>>> {
-        // TODO: make self.reader_pos an Option, handle None in a helper method
+        // Reader cursor will only ever be u64::MAX if the reader has not been initialized
+        // If by some chance the reader is initialized with a file of length u64::MAX this will still work,
+        // as some read length value is subtracted from the cursor position right away
         if self.reader_cursor == u64::MAX {
             self.init_reader()?;
         }
