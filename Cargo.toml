@@ -15,8 +15,14 @@ thiserror = "1.0.40"
 
 [dev-dependencies]
 iai = { git = "https://github.com/sigaloid/iai", rev = "6c83e942" }
+criterion = "0.5"
 
 [[bench]]
 name = "iai"
 path = "benches/iai.rs"
+harness = false
+
+[[bench]]
+name = "criterion"
+path = "benches/criterion.rs"
 harness = false

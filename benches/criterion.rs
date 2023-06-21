@@ -1,7 +1,9 @@
+extern crate criterion;
 use std::io::Cursor;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
+extern crate rev_lines;
 use rev_lines::RawRevLines;
 
 fn input(file_length: usize, lines_length: u32) -> Vec<u8> {
