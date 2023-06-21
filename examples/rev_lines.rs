@@ -1,6 +1,5 @@
 use std::io::Cursor;
 
-extern crate rev_lines;
 use rev_lines::RevLines;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -14,11 +14,11 @@ Documentation is available on [Docs.rs](https://docs.rs/rev_lines).
 ## Example
 
 ```rust
-extern crate rev_lines;
+use std::fs::File;
 
 use rev_lines::RevLines;
 
-let file = File::open("/path/to/file").unwrap();
+let file = File::open("README.md").unwrap();
 let rev_lines = RevLines::new(file);
 
 for line in rev_lines {
