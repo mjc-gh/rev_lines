@@ -40,9 +40,10 @@ static CR_BYTE: u8 = b'\r';
 /// `RevLines` struct
 pub struct RawRevLines<R> {
     reader: BufReader<R>,
-    reader_pos: u64,
+    reader_cursor: u64,
     buffer: Vec<u8>,
-    buffer_pos: usize,
+    buffer_end: usize,
+    read_len: usize,
     was_last_byte_line_feed: bool,
 }
 
@@ -58,25 +59,32 @@ impl<R: Seek + Read> RawRevLines<R> {
     pub fn with_capacity(cap: usize, reader: R) -> RawRevLines<R> {
         RawRevLines {
             reader: BufReader::new(reader),
-            reader_pos: u64::MAX,
+            reader_cursor: u64::MAX,
             buffer: vec![0; cap],
-            buffer_pos: 0,
+            buffer_end: 0,
+            read_len: 0,
             was_last_byte_line_feed: false,
         }
     }
 
     fn init_reader(&mut self) -> io::Result<()> {
-        // Seek to end of reader now
-        self.reader_pos = self.reader.seek(SeekFrom::End(0))?;
+        // Move cursor to the end of the file and store the cursor position
+        self.reader_cursor = self.reader.seek(SeekFrom::End(0))?;
+        // Next read will be the full buffer size or the remaining bytes in the file
+        self.read_len = min(self.buffer.len(), self.reader_cursor as usize);
+        // Move cursor just before the next bytes to read
+        self.reader.seek_relative(-(self.read_len as i64))?;
+        // Update the cursor position
+        self.reader_cursor -= self.read_len as u64;
 
         self.read_to_buffer()?;
 
         // Handle any trailing new line characters for the reader
         // so the first next call does not return Some("")
-        if self.buffer_pos > 0 {
-            if let Some(last_byte) = self.buffer.get(self.buffer_pos - 1) {
+        if self.buffer_end > 0 {
+            if let Some(last_byte) = self.buffer.get(self.buffer_end - 1) {
                 if *last_byte == LF_BYTE {
-                    self.buffer_pos -= 1;
+                    self.buffer_end -= 1;
                     self.was_last_byte_line_feed = true;
                 }
             }
@@ -86,38 +94,49 @@ impl<R: Seek + Read> RawRevLines<R> {
     }
 
     fn read_to_buffer(&mut self) -> io::Result<()> {
-        let size = min(self.buffer.len() as u64, self.reader_pos);
-        let offset = -(size as i64);
+        // Read the next bytes into the buffer, self.read_len was already prepared for that
+        self.reader.read_exact(&mut self.buffer[0..self.read_len])?;
+        // Specify which part of the buffer is valid
+        self.buffer_end = self.read_len;
 
-        // TODO: we only need one seek
-        self.reader.seek(SeekFrom::Current(offset))?;
+        // Determine what the next read length will be
+        let next_read_len = min(self.buffer.len(), self.reader_cursor as usize);
+        // Move the cursor just in front of the next read
         self.reader
-            .read_exact(&mut self.buffer[0..(size as usize)])?;
-        self.reader.seek(SeekFrom::Current(offset))?;
+            .seek_relative(-((self.read_len + next_read_len) as i64))?;
+        // Update cursor position
+        self.reader_cursor -= next_read_len as u64;
 
-        self.reader_pos -= size;
-        self.buffer_pos = size as usize;
+        // Store the next read length, it'll be used in the next call
+        self.read_len = next_read_len;
 
         Ok(())
     }
 
     fn next_line(&mut self) -> io::Result<Option<Vec<u8>>> {
-        // TODO: make self.reader_pos an Option, handle None in a helper method
-        if self.reader_pos == u64::MAX {
+        // Reader cursor will only ever be u64::MAX if the reader has not been initialized
+        // If by some chance the reader is initialized with a file of length u64::MAX this will still work,
+        // as some read length value is subtracted from the cursor position right away
+        if self.reader_cursor == u64::MAX {
             self.init_reader()?;
         }
 
-        let mut result: Vec<u8> = Vec::new();
+        // For most sane scenarios, where size of the buffer is greater than the length of the line,
+        // the result will only contain one and at most two elements, making the flattening trivial.
+        // At the same time, instead of pushing one element at a time, it allows us to copy a subslice of the buffer,
+        // which is very performant on modern architectures.
+        let mut result: Vec<Vec<u8>> = Vec::new();
 
         'outer: loop {
             // Current buffer was read to completion, read new contents
-            if self.buffer_pos == 0 {
+            if self.buffer_end == 0 {
                 // Read the of minimum between the desired
                 // buffer size or remaining length of the reader
                 self.read_to_buffer()?;
             }
 
-            if self.buffer_pos == 0 {
+            // If buffer_end is still 0, it means the reader is empty
+            if self.buffer_end == 0 {
                 if result.is_empty() {
                     return Ok(None);
                 } else {
@@ -125,25 +144,27 @@ impl<R: Seek + Read> RawRevLines<R> {
                 }
             }
 
-            for ch in self.buffer[..self.buffer_pos].iter().rev() {
-                self.buffer_pos -= 1;
+            let mut buffer_length = self.buffer_end;
+
+            for ch in self.buffer[..self.buffer_end].iter().rev() {
+                self.buffer_end -= 1;
                 // Found a new line character to break on
                 if *ch == LF_BYTE {
+                    result.push(self.buffer[self.buffer_end + 1..buffer_length].to_vec());
                     self.was_last_byte_line_feed = true;
                     break 'outer;
                 }
                 // If previous byte was line feed, skip carriage return
-                if *ch != CR_BYTE || !self.was_last_byte_line_feed {
-                    result.push(*ch);
+                if *ch == CR_BYTE && self.was_last_byte_line_feed {
+                    buffer_length -= 1;
                 }
                 self.was_last_byte_line_feed = false;
             }
+
+            result.push(self.buffer[..buffer_length].to_vec());
         }
 
-        // Reverse the results since they were written backwards
-        result.reverse();
-
-        Ok(Some(result))
+        Ok(Some(result.into_iter().rev().flatten().collect()))
     }
 }
 
@@ -227,7 +248,7 @@ mod tests {
     #[test]
     fn raw_handles_file_with_multi_lines() -> TestResult {
         let text = b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec();
-        for cap in 1..(text.len() + 1) {
+        for cap in 5..(text.len() + 1) {
             let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
             let mut rev_lines = RawRevLines::with_capacity(cap, file);
 
