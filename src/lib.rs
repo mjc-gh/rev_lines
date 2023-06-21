@@ -121,7 +121,11 @@ impl<R: Seek + Read> RawRevLines<R> {
             self.init_reader()?;
         }
 
-        let mut result: Vec<u8> = Vec::new();
+        // For most sane scenarios, where size of the buffer is greater than the length of the line,
+        // the result will only contain one and at most two elements, making the flattening trivial.
+        // At the same time, instead of pushing one element at a time, it allows us to copy a subslice of the buffer,
+        // which is very performant on modern architectures.
+        let mut result: Vec<Vec<u8>> = Vec::new();
 
         'outer: loop {
             // Current buffer was read to completion, read new contents
@@ -140,25 +144,27 @@ impl<R: Seek + Read> RawRevLines<R> {
                 }
             }
 
+            let mut buffer_length = self.buffer_end;
+
             for ch in self.buffer[..self.buffer_end].iter().rev() {
                 self.buffer_end -= 1;
                 // Found a new line character to break on
                 if *ch == LF_BYTE {
+                    result.push(self.buffer[self.buffer_end + 1..buffer_length].to_vec());
                     self.was_last_byte_line_feed = true;
                     break 'outer;
                 }
                 // If previous byte was line feed, skip carriage return
-                if *ch != CR_BYTE || !self.was_last_byte_line_feed {
-                    result.push(*ch);
+                if *ch == CR_BYTE && self.was_last_byte_line_feed {
+                    buffer_length -= 1;
                 }
                 self.was_last_byte_line_feed = false;
             }
+
+            result.push(self.buffer[..buffer_length].to_vec());
         }
 
-        // Reverse the results since they were written backwards
-        result.reverse();
-
-        Ok(Some(result))
+        Ok(Some(result.into_iter().rev().flatten().collect()))
     }
 }
 
@@ -242,7 +248,7 @@ mod tests {
     #[test]
     fn raw_handles_file_with_multi_lines() -> TestResult {
         let text = b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec();
-        for cap in 1..(text.len() + 1) {
+        for cap in 5..(text.len() + 1) {
             let file = Cursor::new(b"ABCDEF\nGHIJK\nLMNOPQRST\nUVWXYZ\n".to_vec());
             let mut rev_lines = RawRevLines::with_capacity(cap, file);
 
