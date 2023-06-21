@@ -1,6 +1,3 @@
-extern crate iai;
-extern crate rev_lines;
-
 use std::io::Cursor;
 
 use rev_lines::RawRevLines;

@@ -8,6 +8,7 @@ license = "MIT"
 authors = ["Michael Coyne <mjc@hey.com>"]
 keywords = ["lines", "reverse", "reader", "buffer", "iterator"]
 autobenches = false
+edition = "2021"
 
 [dependencies]
 thiserror = "1.0.40"

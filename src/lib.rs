@@ -6,20 +6,16 @@
 //! #### Example
 //!
 //! ```
-//!  extern crate rev_lines;
+//! use std::fs::File;
 //!
-//!  use rev_lines::RevLines;
-//!  use std::io::BufReader;
-//!  use std::fs::File;
+//! use rev_lines::RevLines;
 //!
-//!  fn main() {
-//!      let file = File::open("README.md").unwrap();
-//!      let rev_lines = RevLines::new(file);
+//! let file = File::open("README.md").unwrap();
+//! let rev_lines = RevLines::new(file);
 //!
-//!      for line in rev_lines {
-//!          println!("{:?}", line);
-//!      }
-//!  }
+//! for line in rev_lines {
+//!     println!("{:?}", line);
+//! }
 //! ```
 //!
 //! If a line with invalid UTF-8 is encountered, the iterator will return `None` next, and stop iterating.
@@ -29,7 +25,6 @@
 use std::cmp::min;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 
-extern crate thiserror;
 use thiserror::Error;
 
 static DEFAULT_SIZE: usize = 4096;
